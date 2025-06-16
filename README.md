@@ -26,7 +26,7 @@ It supports three simple operations:
 
 ```bash
 # clone or download this repo first
-cd /Users/davidhoeck/Developer/sshmanager   # replace with your path
+cd <path-to-your-dir>/sshmanager          # replace with your path
 chmod +x sshm                               # ensure it is executable
 
 # Move it into a directory that's already on $PATH
@@ -41,20 +41,19 @@ sudo ln -s "$PWD/sshm" /usr/local/bin/sshm
 brew install pipx        # or: pip install --user pipx
 pipx ensurepath          # adds pipx's bin dir to PATH
 
-cd /Users/davidhoeck/Developer/sshmanager   # project root
+cd <path-to-your-dir>/sshmanager   # project root
 pipx install .           # installs script + dependency
 ```
 
 ### 3. Plain `pip install`
 
-Create a minimal `pyproject.toml` (see below) and run:
+The repository already ships with a `pyproject.toml`, so you can simply run:
 
 ```bash
 pip install --user .
 ```
 
-> **Note:** `tabulate` is optional but recommended for nicer tables.  
-> Install it with `pip install tabulate` or keep it out – `sshm` gracefully falls back to a built-in formatter.
+This installs `sshm` (along with the optional `tabulate` dependency) into your user-site packages and places a console script in `~/Library/Python/3.x/bin` (ensure that directory is on your `$PATH`).
 
 ---
 

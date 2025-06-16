@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+*.whl
+pip-wheel-metadata/
+
+# Virtual environments
+venv*/
+.env/
+.venv/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Test & coverage artifacts
+.tox/
+.nox/
+.pytest_cache/
+.coverage*
+htmlcov/
+
+# Type-checker caches
+.mypy_cache/
+.pyre/
+
+# macOS, editor & misc
+.DS_Store
+*.swp
+*.swo
+*~ 
