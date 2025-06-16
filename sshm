@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""
+sshm – Simple SSH config manager
+--------------------------------
+A lightweight command-line helper to interact with the user's `~/.ssh/config` file.
+It supports three sub-commands:
+  • add     – Append a new Host section
+  • remove  – Delete an existing Host section
+  • list    – Pretty-print a table with all Host sections
+
+Usage examples:
+    sshm add mybox 192.168.1.10 -u ubuntu -p 22
+    sshm remove mybox
+    sshm list
+
+The program never rewrites unrelated parts of the file and keeps comments and
+formatting of other stanzas intact.
+"""
+import argparse
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+try:
+    from tabulate import tabulate  # type: ignore
+except ImportError:  # pragma: no cover – fall back to internal printer if missing
+    tabulate = None
+
+CONFIG_PATH = Path.home() / ".ssh" / "config"
+
+HostEntry = Dict[str, str]
+
+
+def ensure_config_exists() -> None:
+    """Create an empty ~/.ssh/config file if it does not yet exist."""
+    config_dir = CONFIG_PATH.parent
+    config_dir.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_PATH.exists():
+        CONFIG_PATH.touch(mode=0o600)
+
+
+def read_config_lines() -> List[str]:
+    ensure_config_exists()
+    with CONFIG_PATH.open("r", encoding="utf-8") as f:
+        return f.readlines()
+
+
+def write_config_lines(lines: List[str]) -> None:
+    backup_path = CONFIG_PATH.with_suffix(".bak")
+    # Write a backup first
+    if CONFIG_PATH.exists():
+        CONFIG_PATH.replace(backup_path)
+    with CONFIG_PATH.open("w", encoding="utf-8") as f:
+        f.writelines(lines)
+    # Preserve permissions (chmod 600)
+    os.chmod(CONFIG_PATH, 0o600)
+
+
+def parse_entries(lines: List[str]) -> List[HostEntry]:
+    """Parse ~/.ssh/config lines and return a list of host dictionaries."""
+    entries: List[HostEntry] = []
+    current_alias: str | None = None
+    current_opts: HostEntry = {}
+
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            # Blank line or comment – ignore in parsing but keep while writing
+            continue
+        if stripped.lower().startswith("host "):
+            # Store previous block if we were inside one
+            if current_alias is not None:
+                entries.append({"Host": current_alias, **current_opts})
+            # Start new block – everything after the first whitespace belongs to the alias list
+            current_alias = stripped.split(maxsplit=1)[1]
+            current_opts = {}
+        else:
+            if current_alias is None:
+                # Options outside a Host block – ignore
+                continue
+            if " " not in stripped:
+                # Malformed line, ignore
+                continue
+            key, value = stripped.split(maxsplit=1)
+            current_opts[key] = value
+
+    # Append the final block if we reached end-of-file while still inside a Host section
+    if current_alias is not None:
+        entries.append({"Host": current_alias, **current_opts})
+
+    return entries
+
+
+def add_entry(alias: str, hostname: str, user: str | None, port: str | None) -> None:
+    lines = read_config_lines()
+    entries = parse_entries(lines)
+
+    if any(entry["Host"] == alias for entry in entries):
+        print(f"Error: alias '{alias}' already exists.", file=sys.stderr)
+        sys.exit(1)
+
+    stanza_lines: List[str] = ["\n", f"Host {alias}\n", f"  HostName {hostname}\n"]
+    if user:
+        stanza_lines.append(f"  User {user}\n")
+    if port:
+        stanza_lines.append(f"  Port {port}\n")
+
+    with CONFIG_PATH.open("a", encoding="utf-8") as f:
+        f.writelines(stanza_lines)
+    print(f"✔ Added entry '{alias}' to {CONFIG_PATH}")
+
+
+def remove_entry(alias: str) -> None:
+    lines = read_config_lines()
+    new_lines: List[str] = []
+    inside_target = False
+
+    # Regex to match the start of the target Host block exactly
+    host_line_pattern = re.compile(rf"^Host\s+{re.escape(alias)}(\s|$)")
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if host_line_pattern.match(line.strip()):
+            # Skip this Host line and everything until the next Host line or EOF
+            inside_target = True
+            i += 1
+            # keep skipping until we find the next Host or reach EOF
+            while i < len(lines) and not lines[i].lstrip().lower().startswith("host "):
+                i += 1
+            inside_target = False
+            continue  # Do not add skipped lines
+        new_lines.append(line)
+        i += 1
+
+    if len(new_lines) == len(lines):
+        print(f"Error: alias '{alias}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    write_config_lines(new_lines)
+    print(f"✔ Removed entry '{alias}' from {CONFIG_PATH}")
+
+
+def list_entries() -> None:
+    lines = read_config_lines()
+    entries = parse_entries(lines)
+    if not entries:
+        print("No host entries found.")
+        return
+
+    headers = ["Alias", "HostName", "User", "Port"]
+    rows: List[Tuple[str, str, str, str]] = []
+    for e in entries:
+        rows.append(
+            (
+                e.get("Host", ""),
+                e.get("HostName", ""),
+                e.get("User", ""),
+                e.get("Port", ""),
+            )
+        )
+
+    if tabulate:
+        print(tabulate(rows, headers=headers, tablefmt="simple_outline"))
+    else:
+        # Fallback manual formatting
+        col_widths = [max(len(str(row[i])) for row in rows + [headers]) for i in range(4)]
+        def fmt(row):
+            return "  ".join(str(val).ljust(col_widths[i]) for i, val in enumerate(row))
+
+        print(fmt(headers))
+        print("-" * (sum(col_widths) + 6))
+        for row in rows:
+            print(fmt(row))
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="sshm", description="Manage entries in ~/.ssh/config")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    add_p = sub.add_parser("add", help="Add a new host entry")
+    add_p.add_argument("alias", help="Name of the Host entry (alias)")
+    add_p.add_argument("hostname", help="The HostName (IP or domain)")
+    add_p.add_argument("-u", "--user", help="SSH user name")
+    add_p.add_argument("-p", "--port", help="SSH port")
+
+    rm_p = sub.add_parser("remove", help="Remove an existing host entry")
+    rm_p.add_argument("alias", help="Alias to remove")
+
+    sub.add_parser("list", help="List all host entries")
+
+    return parser
+
+
+def main(argv: List[str] | None = None) -> None:
+    args = build_arg_parser().parse_args(argv)
+
+    if args.command == "add":
+        add_entry(args.alias, args.hostname, args.user, args.port)
+    elif args.command == "remove":
+        remove_entry(args.alias)
+    elif args.command == "list":
+        list_entries()
+    else:  # pragma: no cover – argparse ensures we never get here
+        print("Unknown command", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main() 
